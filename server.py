@@ -1,15 +1,23 @@
 from flask import Flask, request, jsonify, render_template
 import sqlite3
-from datetime import datetime
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-DB_NAME = "locations.db"
+# --- USE WRITABLE PATH FOR RAILWAY ---
+DB_PATH = "/tmp/locations.db"
 
-# Create DB & table if not exists
+
+def get_connection():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# --- CREATE TABLE ON STARTUP ---
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Locations (
@@ -18,13 +26,15 @@ def init_db():
             Latitude REAL,
             Longitude REAL,
             Timestamp TEXT
-        )
+        );
     """)
     conn.commit()
     conn.close()
 
-def get_connection():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+# Run DB initialization when the module is imported
+init_db()
+
 
 @app.route('/add_location', methods=['POST'])
 def add_location():
@@ -37,12 +47,9 @@ def add_location():
     lng = data.get('lng')
     timestamp = data.get('timestamp')
 
-    # Convert timestamp
     try:
-        clean_ts = timestamp.replace('Z', '')
-        ts_obj = datetime.fromisoformat(clean_ts)
-        ts_str = ts_obj.isoformat()
-    except Exception:
+        ts_str = timestamp.replace('Z', '') if timestamp else datetime.now().isoformat()
+    except:
         ts_str = datetime.now().isoformat()
 
     conn = get_connection()
@@ -55,31 +62,34 @@ def add_location():
 
     conn.commit()
     conn.close()
-
     return jsonify({'status': 'ok'})
+
 
 @app.route('/get_locations/<user_id>', methods=['GET'])
 def get_locations(user_id):
     conn = get_connection()
     cursor = conn.cursor()
+
     cursor.execute("""
         SELECT Latitude, Longitude, Timestamp
         FROM Locations
-        WHERE UserID=?
+        WHERE UserID = ?
         ORDER BY Timestamp
     """, (user_id,))
+
     rows = cursor.fetchall()
     conn.close()
 
     return jsonify([
-        {'lat': r[0], 'lng': r[1], 'timestamp': r[2]}
+        {'lat': r['Latitude'], 'lng': r['Longitude'], 'timestamp': r['Timestamp']}
         for r in rows
     ])
+
 
 @app.route('/map')
 def map_view():
     return render_template('map.html')
 
-if __name__ == '__main__':
-    init_db()
+
+if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000)
