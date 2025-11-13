@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Live GPS Tracker (Animated)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: Arial, sans-serif;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    .info-box {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 12px;
+      border-radius: 6px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <div class="info-box">
+    <b>Live GPS Map</b><br>
+    <label>User ID:</label>
+    <input id="userId" type="text" value="user1" placeholder="Enter user ID">
+    <button onclick="loadData(true)">Load</button>
+    <small id="lastUpdate" style="display:block;margin-top:4px;color:#666;"></small>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    let map, polyline, trailCoords = [], liveMarker = null;
+    let userId = "user1";
+    let autoRefreshInterval = 8000; // every 8 seconds
+
+    function initMap() {
+      map = L.map('map').setView([20.5937, 78.9629], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      setInterval(() => loadData(false), autoRefreshInterval);
+    }
+
+    async function loadData(reset = false) {
+      userId = document.getElementById("userId").value || "user1";
+      const resp = await fetch(`/get_locations/${userId}`);
+      const data = await resp.json();
+
+      document.getElementById("lastUpdate").innerText =
+        "Last updated: " + new Date().toLocaleTimeString();
+
+      if (!Array.isArray(data) || data.length === 0) {
+        console.log("No data found for", userId);
+        return;
+      }
+
+      // Only draw new data after the last known point
+      const newPoints = reset ? data : data.slice(trailCoords.length);
+
+      if (newPoints.length === 0) return; // no new positions yet
+
+      // Extend the trail path
+      newPoints.forEach(p => trailCoords.push([p.lat, p.lng]));
+
+      // Draw or update the polyline
+      if (!polyline) {
+        polyline = L.polyline(trailCoords, {
+          color: 'blue',
+          weight: 4,
+          opacity: 0.8
+        }).addTo(map);
+      } else {
+        polyline.setLatLngs(trailCoords);
+      }
+
+      // Animate live marker smoothly to last location
+      const latest = trailCoords[trailCoords.length - 1];
+      if (!liveMarker) {
+        liveMarker = L.circleMarker(latest, {
+          radius: 8,
+          fillColor: 'red',
+          color: 'white',
+          weight: 2,
+          fillOpacity: 1
+        }).addTo(map)
+          .bindPopup(`<b>${userId}</b><br>${latest[0].toFixed(5)}, ${latest[1].toFixed(5)}`);
+        map.flyTo(latest, 16, { duration: 2 });
+      } else {
+        animateMarkerMove(liveMarker, liveMarker.getLatLng(), L.latLng(latest[0], latest[1]), 2000);
+      }
+    }
+
+    // Smooth transition of marker between points
+    function animateMarkerMove(marker, fromLatLng, toLatLng, durationMs) {
+      const start = performance.now();
+      const latDiff = toLatLng.lat - fromLatLng.lat;
+      const lngDiff = toLatLng.lng - fromLatLng.lng;
+
+      function animate(now) {
+        const progress = Math.min((now - start) / durationMs, 1);
+        const lat = fromLatLng.lat + latDiff * progress;
+        const lng = fromLatLng.lng + lngDiff * progress;
+        marker.setLatLng([lat, lng]);
+        if (progress < 1) requestAnimationFrame(animate);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    initMap();
+  </script>
+</body>
+</html>
