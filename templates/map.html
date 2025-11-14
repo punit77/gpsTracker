@@ -14,35 +14,47 @@
       width: 100%;
       height: 100%;
     }
+
     .info-box {
       position: absolute;
       top: 10px;
-      left: 10px;
+      right: 10px; /* moved away from zoom buttons */
       z-index: 1000;
       background: rgba(255, 255, 255, 0.95);
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 12px;
+      border-radius: 10px;
       box-shadow: 0 0 8px rgba(0,0,0,0.3);
       font-size: 14px;
+      width: 220px;
     }
     input {
       margin: 4px 0;
       padding: 4px;
-      width: 160px;
+      width: 180px;
     }
     button {
-      margin-top: 5px;
+      margin-top: 6px;
       padding: 6px 10px;
+      width: 100%;
     }
   </style>
 </head>
+
 <body>
 
+<!-- TOP RIGHT CONTROL PANEL -->
 <div class="info-box">
-  <b>Live GPS Map</b><br>
+  <b>GPS Tracking</b><br><br>
 
   <label>User ID:</label><br>
-  <input id="userId" type="text" value="user1"><br>
+  <input id="userId" type="text" value="user1"><br><br>
+
+  <b>Live Tracking</b><br>
+  <button onclick="startLiveTracking()">Load Live</button>
+
+  <br><br>
+
+  <b>History Range</b><br>
 
   <label>Start:</label><br>
   <input id="startTime" type="datetime-local"><br>
@@ -51,48 +63,56 @@
   <input id="endTime" type="datetime-local"><br>
 
   <button onclick="loadHistory()">Load Range</button>
-  <small id="lastUpdate" style="display:block;margin-top:4px;color:#666;"></small>
+
+  <small id="lastUpdate" 
+        style="display:block;margin-top:6px;color:#666;"></small>
 </div>
 
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
 <script>
-
+/* ============================
+      GLOBAL VARIABLES
+============================ */
 let map, polyline, trailCoords = [], liveMarker = null;
-let lastId = 0;  // for incremental updates
-let autoRefreshInterval = 8000; // 8 seconds (configurable)
+let lastId = 0;  
+let autoRefreshInterval = 8000; 
 let userId = "user1";
+let liveMode = false;    // IMPORTANT FIX
 
-// ---------------------------
-// INIT MAP
-// ---------------------------
+/* ============================
+          INIT MAP
+============================ */
 function initMap() {
   map = L.map('map').setView([20.5937, 78.9629], 5);
+
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
 
-  // live incremental updates every 8s
-  setInterval(() => loadLiveUpdates(), autoRefreshInterval);
+  // Only update when in live mode
+  setInterval(() => {
+    if (liveMode) loadLiveUpdates();
+  }, autoRefreshInterval);
 }
 
-
-// ---------------------------
-// LOAD FULL HISTORY (with time filter)
-// Clears map + draws all points
-// ---------------------------
+/* ============================
+   LOAD HISTORY (FULL RANGE)
+============================ */
 async function loadHistory() {
+  liveMode = false;  // STOP LIVE UPDATES
+
   userId = document.getElementById("userId").value || "user1";
   const start = document.getElementById("startTime").value;
-  const end = document.getElementById("endTime").value;
+  const end   = document.getElementById("endTime").value;
 
   let url = `/get_locations?user_id=${userId}`;
-
   if (start) url += `&start=${start}`;
-  if (end) url += `&end=${end}`;
+  if (end)   url += `&end=${end}`;
 
-  console.log("Loading:", url);
+  console.log("Loading history:", url);
 
   const resp = await fetch(url);
   const data = await resp.json();
@@ -100,37 +120,69 @@ async function loadHistory() {
   trailCoords = [];
   lastId = 0;
 
-  // Clear old map layers
   if (polyline) polyline.remove();
   if (liveMarker) liveMarker.remove();
 
   if (!data.length) {
-    alert("No data found for selected time range.");
+    alert("No data found for this range");
     return;
   }
 
-  // Fill trail
   data.forEach(p => {
     trailCoords.push([p.lat, p.lng]);
-    lastId = p.id;   // track highest ID
+    lastId = p.id;
   });
 
   drawPolyline();
-  placeMarker(trailCoords[trailCoords.length - 1]);
+  placeMarker(trailCoords.at(-1));
 
   document.getElementById("lastUpdate").innerText =
-    "Loaded " + data.length + " points | Last ID: " + lastId;
+    `Loaded ${data.length} points | Last ID: ${lastId}`;
 }
 
-
-// ---------------------------
-// INCREMENTAL LIVE UPDATE
-// ONLY fetch new points using after_id
-// ---------------------------
-async function loadLiveUpdates() {
-  if (!lastId) return; // loadHistory not called yet → do nothing
+/* ============================
+     LOAD LIVE MODE
+============================ */
+function startLiveTracking() {
+  liveMode = true;
 
   userId = document.getElementById("userId").value || "user1";
+
+  trailCoords = [];
+  lastId = 0;
+
+  if (polyline) polyline.remove();
+  if (liveMarker) liveMarker.remove();
+
+  // Load ONLY 2000 points for performance
+  fetch(`/get_locations?user_id=${userId}&limit=2000`)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.length) {
+        alert("No data found for this user");
+        return;
+      }
+
+      data.forEach(p => {
+        trailCoords.push([p.lat, p.lng]);
+        lastId = p.id;
+      });
+
+      drawPolyline();
+      placeMarker(trailCoords.at(-1));
+
+      document.getElementById("lastUpdate").innerText =
+        `Live tracking started | Last ID: ${lastId}`;
+
+      loadLiveUpdates();  // IMMEDIATE UPDATE
+    });
+}
+
+/* ============================
+    INCREMENTAL LIVE UPDATE
+============================ */
+async function loadLiveUpdates() {
+  if (!lastId || !liveMode) return;
 
   const url = `/get_locations?user_id=${userId}&after_id=${lastId}`;
   const resp = await fetch(url);
@@ -138,23 +190,21 @@ async function loadLiveUpdates() {
 
   if (!newPoints.length) return;
 
-  // add new points
   newPoints.forEach(p => {
     trailCoords.push([p.lat, p.lng]);
     lastId = p.id;
   });
 
   drawPolyline();
-  animateMarker(trailCoords[trailCoords.length - 1]);
+  animateMarker(trailCoords.at(-1));
 
   document.getElementById("lastUpdate").innerText =
     "Updated @ " + new Date().toLocaleTimeString();
 }
 
-
-// ---------------------------
-// DRAW / UPDATE POLYLINE
-// ---------------------------
+/* ============================
+     DRAW / UPDATE POLYLINE
+============================ */
 function drawPolyline() {
   if (!polyline) {
     polyline = L.polyline(trailCoords, {
@@ -167,10 +217,9 @@ function drawPolyline() {
   }
 }
 
-
-// ---------------------------
-// FIRST MARKER
-// ---------------------------
+/* ============================
+     PLACE STATIC MARKER
+============================ */
 function placeMarker(latlng) {
   liveMarker = L.circleMarker(latlng, {
     radius: 8,
@@ -183,21 +232,21 @@ function placeMarker(latlng) {
   map.flyTo(latlng, 16, { duration: 2 });
 }
 
-
-// ---------------------------
-// SMOOTH MOVEMENT ANIMATION
-// ---------------------------
+/* ============================
+   SMOOTH MARKER MOVEMENT
+============================ */
 function animateMarker(newLatLng) {
   if (!liveMarker) return placeMarker(newLatLng);
 
   const start = liveMarker.getLatLng();
-  const end = L.latLng(newLatLng[0], newLatLng[1]);
+  const end   = L.latLng(newLatLng[0], newLatLng[1]);
   const durationMs = 2000;
 
   const startTime = performance.now();
 
   function animate(now) {
     let t = Math.min((now - startTime) / durationMs, 1);
+
     const lat = start.lat + (end.lat - start.lat) * t;
     const lng = start.lng + (end.lng - start.lng) * t;
 
@@ -209,8 +258,9 @@ function animateMarker(newLatLng) {
   requestAnimationFrame(animate);
 }
 
-
-// Start map
+/* ============================
+     LAUNCH MAP
+============================ */
 initMap();
 
 </script>
