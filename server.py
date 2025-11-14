@@ -65,23 +65,60 @@ def add_location():
     return jsonify({'status': 'ok'})
 
 
-@app.route('/get_locations/<user_id>', methods=['GET'])
-def get_locations(user_id):
+@app.route('/get_locations', methods=['GET'])
+def get_locations():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
+
+    start = request.args.get("start")     # optional
+    end = request.args.get("end")         # optional
+    after_ts = request.args.get("after_ts")  # optional for live incremental
+    after_id = request.args.get("after_id")  # optional for live incremental
+
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT Latitude, Longitude, Timestamp
+    # Base query
+    query = """
+        SELECT ID, Latitude, Longitude, Timestamp
         FROM Locations
         WHERE UserID = ?
-        ORDER BY Timestamp
-    """, (user_id,))
+    """
+    params = [user_id]
 
+    # Time-range filter
+    if start:
+        query += " AND Timestamp >= ?"
+        params.append(start)
+
+    if end:
+        query += " AND Timestamp <= ?"
+        params.append(end)
+
+    # Incremental (fast live updates)
+    if after_ts:
+        query += " AND Timestamp > ?"
+        params.append(after_ts)
+
+    if after_id:
+        query += " AND ID > ?"
+        params.append(after_id)
+
+    # Always order ascending
+    query += " ORDER BY ID ASC"
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
 
     return jsonify([
-        {'lat': r['Latitude'], 'lng': r['Longitude'], 'timestamp': r['Timestamp']}
+        {
+            'id': r['ID'],
+            'lat': r['Latitude'],
+            'lng': r['Longitude'],
+            'timestamp': r['Timestamp']
+        }
         for r in rows
     ])
 
