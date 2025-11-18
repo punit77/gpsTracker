@@ -76,13 +76,13 @@ def get_locations():
     after_ts = request.args.get("after_ts")
     after_id = request.args.get("after_id")
 
-    # pagination / protection
+    # pagination
     MAX_LIMIT = 5000
     default_limit = None  # keep None meaning "no explicit limit" (but client can request)
     limit = request.args.get("limit", default_limit)
     offset = request.args.get("offset")
 
-    # Validate limit and offset if provided
+    # Validate limit 
     limit_param = None
     offset_param = None
     if limit is not None:
