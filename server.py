@@ -64,22 +64,49 @@ def add_location():
     conn.close()
     return jsonify({'status': 'ok'})
 
-
 @app.route('/get_locations', methods=['GET'])
 def get_locations():
     user_id = request.args.get("user_id")
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    start = request.args.get("start")     # optional
-    end = request.args.get("end")         # optional
-    after_ts = request.args.get("after_ts")  # optional for live incremental
-    after_id = request.args.get("after_id")  # optional for live incremental
+    # optional filters
+    start = request.args.get("start")
+    end = request.args.get("end")
+    after_ts = request.args.get("after_ts")
+    after_id = request.args.get("after_id")
+
+    # pagination / protection
+    MAX_LIMIT = 5000
+    default_limit = None  # keep None meaning "no explicit limit" (but client can request)
+    limit = request.args.get("limit", default_limit)
+    offset = request.args.get("offset")
+
+    # Validate limit and offset if provided
+    limit_param = None
+    offset_param = None
+    if limit is not None:
+        try:
+            limit_param = int(limit)
+            if limit_param <= 0:
+                return jsonify({'error': 'limit must be a positive integer'}), 400
+            if limit_param > MAX_LIMIT:
+                limit_param = MAX_LIMIT  # cap it
+        except ValueError:
+            return jsonify({'error': 'limit must be an integer'}), 400
+
+    if offset is not None:
+        try:
+            offset_param = int(offset)
+            if offset_param < 0:
+                return jsonify({'error': 'offset must be >= 0'}), 400
+        except ValueError:
+            return jsonify({'error': 'offset must be an integer'}), 400
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Base query
+    # Build the base query and params
     query = """
         SELECT ID, Latitude, Longitude, Timestamp
         FROM Locations
@@ -87,7 +114,6 @@ def get_locations():
     """
     params = [user_id]
 
-    # Time-range filter
     if start:
         query += " AND Timestamp >= ?"
         params.append(start)
@@ -96,20 +122,42 @@ def get_locations():
         query += " AND Timestamp <= ?"
         params.append(end)
 
-    # Incremental (fast live updates)
     if after_ts:
         query += " AND Timestamp > ?"
         params.append(after_ts)
 
     if after_id:
-        query += " AND ID > ?"
-        params.append(after_id)
+        # after_id should be numeric; simple validation
+        try:
+            _ = int(after_id)
+            query += " AND ID > ?"
+            params.append(after_id)
+        except ValueError:
+            conn.close()
+            return jsonify({'error': 'after_id must be an integer'}), 400
 
-    # Always order ascending
+    # Always order by ID ascending (oldest -> newest)
     query += " ORDER BY ID ASC"
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
+    # Apply LIMIT / OFFSET if provided (parameters appended after existing params)
+    if limit_param is not None:
+        query += " LIMIT ?"
+        params.append(limit_param)
+        if offset_param is not None:
+            query += " OFFSET ?"
+            params.append(offset_param)
+    elif offset_param is not None:
+        # offset without limit is ambiguous; reject to avoid accidental full scan
+        conn.close()
+        return jsonify({'error': 'offset requires limit to be set'}), 400
+
+    try:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': 'database error', 'details': str(e)}), 500
+
     conn.close()
 
     return jsonify([
