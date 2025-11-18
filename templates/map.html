@@ -51,6 +51,10 @@
 
   <b>Live Tracking</b><br>
   <button onclick="startLiveTracking()">Load Live</button>
+  <br>
+  <label><input type="checkbox" id="followToggle" checked>
+  Follow Marker</label>
+  <br><br>
 
   <br><br>
 
@@ -77,6 +81,11 @@
       GLOBAL VARIABLES
 ============================ */
 let map, polyline, trailCoords = [], liveMarker = null;
+const carIcon = L.icon({
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/744/744465.png",
+  iconSize: [40, 40],    // adjust size
+  iconAnchor: [20, 20],  // center icon
+});
 let lastId = 0;  
 let autoRefreshInterval = 8000; 
 let userId = "user1";
@@ -108,7 +117,7 @@ async function loadHistory() {
   const start = document.getElementById("startTime").value;
   const end   = document.getElementById("endTime").value;
 
-  let url = `/get_locations?user_id=${userId}`;
+  let url = `/get_locations?user_id=${userId}&limit=5000`;
   if (start) url += `&start=${start}`;
   if (end)   url += `&end=${end}`;
 
@@ -221,16 +230,10 @@ function drawPolyline() {
      PLACE STATIC MARKER
 ============================ */
 function placeMarker(latlng) {
-  liveMarker = L.circleMarker(latlng, {
-    radius: 8,
-    fillColor: 'red',
-    color: 'white',
-    weight: 2,
-    fillOpacity: 1
-  }).addTo(map);
-
+  liveMarker = L.marker(latlng, { icon: carIcon }).addTo(map);
   map.flyTo(latlng, 16, { duration: 2 });
 }
+
 
 /* ============================
    SMOOTH MARKER MOVEMENT
@@ -243,15 +246,20 @@ function animateMarker(newLatLng) {
   const durationMs = 2000;
 
   const startTime = performance.now();
-
+  
   function animate(now) {
     let t = Math.min((now - startTime) / durationMs, 1);
 
-    const lat = start.lat + (end.lat - start.lat) * t;
-    const lng = start.lng + (end.lng - start.lng) * t;
+const lat = start.lat + (end.lat - start.lat) * t;
+const lng = start.lng + (end.lng - start.lng) * t;
 
-    liveMarker.setLatLng([lat, lng]);
+liveMarker.setLatLng([lat, lng]);
+const angle = Math.atan2(end.lng - start.lng, end.lat - start.lat) * (180 / Math.PI);
+liveMarker._icon.style.transform = `rotate(${angle}deg)`;
 
+if (document.getElementById("followToggle")?.checked) {
+    map.panTo([lat, lng], { animate: true });
+}
     if (t < 1) requestAnimationFrame(animate);
   }
 
@@ -261,6 +269,15 @@ function animateMarker(newLatLng) {
 /* ============================
      LAUNCH MAP
 ============================ */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    liveMode = false;     // stop auto updates
+  } else {
+    // resume only if we were in live mode earlier
+    if (lastId !== 0) liveMode = true;
+  }
+});
+
 initMap();
 
 </script>
