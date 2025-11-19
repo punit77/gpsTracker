@@ -137,7 +137,7 @@ def get_locations():
             return jsonify({'error': 'after_id must be an integer'}), 400
 
     # Always order by ID ascending (oldest -> newest)
-    query += " ORDER BY ID ASC"
+    query += " ORDER BY datetime(Timestamp) ASC"
 
     # Apply LIMIT / OFFSET if provided (parameters appended after existing params)
     if limit_param is not None:
