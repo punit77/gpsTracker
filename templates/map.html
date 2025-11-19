@@ -14,7 +14,6 @@
       width: 100%;
       height: 100%;
     }
-
     .info-box {
       position: absolute;
       top: 10px;
@@ -44,21 +43,15 @@
 
 <!-- TOP RIGHT CONTROL PANEL -->
 <div class="info-box">
-  <b>GPS Tracking</b><br><br>
+  <b>GPS Tracking</b><br>
 
   <label>User ID:</label><br>
   <input id="userId" type="text" value="user1"><br><br>
 
   <b>Live Tracking</b><br>
   <button onclick="startLiveTracking()">Load Live</button>
-  <br>
-  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-    <input type="checkbox" id="followToggle" checked>
-    <span>Follow Marker</span>
-  </label>
-  <br><br>
 
-  <br><br>
+  <br>
 
   <b>History Range</b><br>
 
@@ -83,10 +76,12 @@
       GLOBAL VARIABLES
 ============================ */
 let map, polyline, trailCoords = [], liveMarker = null;
-let lastId = 0;  
 let autoRefreshInterval = 8000; 
 let userId = "user1";
 let liveMode = false;    // IMPORTANT FIX
+let wasLiveBefore = false;
+let lastHistoryId = 0;
+let lastLiveId = 0;
 
 /* ============================
           INIT MAP
@@ -108,6 +103,7 @@ function initMap() {
    LOAD HISTORY (FULL RANGE)
 ============================ */
 async function loadHistory() {
+  wasLiveBefore = false;
   liveMode = false;  // STOP LIVE UPDATES
 
   userId = document.getElementById("userId").value || "user1";
@@ -124,7 +120,7 @@ async function loadHistory() {
   const data = await resp.json();
 
   trailCoords = [];
-  lastId = 0;
+  lastHistoryId = 0;
 
   if (polyline) polyline.remove();
   if (liveMarker) liveMarker.remove();
@@ -136,26 +132,31 @@ async function loadHistory() {
 
   data.forEach(p => {
     trailCoords.push([p.lat, p.lng]);
-    lastId = p.id;
+    lastHistoryId = p.id;
   });
 
-  drawPolyline();
-  placeMarker(trailCoords.at(-1));
+
+  setTimeout(() => {
+      drawPolyline();
+      placeMarker(trailCoords.at(-1));
+  }, 50);
+
 
   document.getElementById("lastUpdate").innerText =
-    `Loaded ${data.length} points | Last ID: ${lastId}`;
+    `Loaded ${data.length} points | Last History ID: ${lastHistoryId}`;
 }
 
 /* ============================
      LOAD LIVE MODE
 ============================ */
 function startLiveTracking() {
+  wasLiveBefore = true;
   liveMode = true;
 
   userId = document.getElementById("userId").value || "user1";
 
   trailCoords = [];
-  lastId = 0;
+  lastLiveId = 0;
 
   if (polyline) polyline.remove();
   if (liveMarker) liveMarker.remove();
@@ -171,16 +172,18 @@ function startLiveTracking() {
 
       data.forEach(p => {
         trailCoords.push([p.lat, p.lng]);
-        lastId = p.id;
+        lastLiveId = p.id;
       });
 
-      drawPolyline();
-      placeMarker(trailCoords.at(-1));
+      setTimeout(() => {
+          drawPolyline(); 
+          placeMarker(trailCoords.at(-1));
+      }, 50);
 
       document.getElementById("lastUpdate").innerText =
-        `Live tracking started | Last ID: ${lastId}`;
+        `Live tracking started | Last Live ID: ${lastLiveId}`;
 
-      loadLiveUpdates();  // IMMEDIATE UPDATE
+      setTimeout(loadLiveUpdates, 500); // IMMEDIATE UPDATE
     });
 }
 
@@ -188,9 +191,9 @@ function startLiveTracking() {
     INCREMENTAL LIVE UPDATE
 ============================ */
 async function loadLiveUpdates() {
-  if (!lastId || !liveMode) return;
+  if (!lastLiveId || !liveMode) return;
 
-  const url = `/get_locations?user_id=${userId}&after_id=${lastId}`;
+  const url = `/get_locations?user_id=${userId}&after_id=${lastLiveId}`;
   const resp = await fetch(url);
   const newPoints = await resp.json();
 
@@ -198,10 +201,16 @@ async function loadLiveUpdates() {
 
   newPoints.forEach(p => {
     trailCoords.push([p.lat, p.lng]);
-    lastId = p.id;
+    lastLiveId = p.id;
   });
 
-  drawPolyline();
+
+if (polyline) {
+    polyline.addLatLng(trailCoords.at(-1));
+} else {
+    drawPolyline();
+}
+
   animateMarker(trailCoords.at(-1));
 
   document.getElementById("lastUpdate").innerText =
@@ -219,7 +228,7 @@ function drawPolyline() {
       opacity: 0.8
     }).addTo(map);
   } else {
-    polyline.setLatLngs(trailCoords);
+    polyline.addLatLng(trailCoords.at(-1));
   }
 }
 
@@ -257,9 +266,7 @@ const lat = start.lat + (end.lat - start.lat) * t;
 const lng = start.lng + (end.lng - start.lng) * t;
 
 liveMarker.setLatLng([lat, lng]);
-if (document.getElementById("followToggle")?.checked) {
-    map.panTo([lat, lng], { animate: true });
-}
+map.panTo([lat, lng], { animate: true });
     if (t < 1) requestAnimationFrame(animate);
   }
 
@@ -270,12 +277,18 @@ if (document.getElementById("followToggle")?.checked) {
      LAUNCH MAP
 ============================ */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    liveMode = false;     // stop auto updates
-  } else {
-    // resume only if we were in live mode earlier
-    if (lastId !== 0) liveMode = true;
-  }
+    if (document.hidden) {
+        // Save whether we were in live mode
+        wasLiveBefore = liveMode;
+        liveMode = false; // stop updates
+    } else {
+        // Resume only if Live Mode was already active before leaving
+        if (wasLiveBefore) {
+            liveMode = true;
+            wasLiveBefore = false;
+            loadLiveUpdates();  // immediate refresh
+        }
+    }
 });
 
 initMap();
