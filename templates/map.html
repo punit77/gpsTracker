@@ -52,8 +52,10 @@
   <b>Live Tracking</b><br>
   <button onclick="startLiveTracking()">Load Live</button>
   <br>
-  <label><input type="checkbox" id="followToggle" checked>
-  Follow Marker</label>
+  <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+    <input type="checkbox" id="followToggle" checked>
+    <span>Follow Marker</span>
+  </label>
   <br><br>
 
   <br><br>
@@ -81,11 +83,6 @@
       GLOBAL VARIABLES
 ============================ */
 let map, polyline, trailCoords = [], liveMarker = null;
-const carIcon = L.icon({
-  iconUrl: "https://cdn-icons-png.flaticon.com/512/744/744465.png",
-  iconSize: [40, 40],    // adjust size
-  iconAnchor: [20, 20],  // center icon
-});
 let lastId = 0;  
 let autoRefreshInterval = 8000; 
 let userId = "user1";
@@ -230,10 +227,16 @@ function drawPolyline() {
      PLACE STATIC MARKER
 ============================ */
 function placeMarker(latlng) {
-  liveMarker = L.marker(latlng, { icon: carIcon }).addTo(map);
+  liveMarker = L.circleMarker(latlng, {
+    radius: 8,
+    fillColor: 'red',
+    color: 'white',
+    weight: 2,
+    fillOpacity: 1
+  }).addTo(map);
+
   map.flyTo(latlng, 16, { duration: 2 });
 }
-
 
 /* ============================
    SMOOTH MARKER MOVEMENT
@@ -254,9 +257,6 @@ const lat = start.lat + (end.lat - start.lat) * t;
 const lng = start.lng + (end.lng - start.lng) * t;
 
 liveMarker.setLatLng([lat, lng]);
-const angle = Math.atan2(end.lng - start.lng, end.lat - start.lat) * (180 / Math.PI);
-liveMarker._icon.style.transform = `rotate(${angle}deg)`;
-
 if (document.getElementById("followToggle")?.checked) {
     map.panTo([lat, lng], { animate: true });
 }
