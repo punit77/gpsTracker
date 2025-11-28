@@ -46,11 +46,10 @@
   <b>GPS Tracking</b><br>
 
   <label>User ID:</label><br>
-  <input id="userId" type="text" value="user1"><br><br>
+  <input id="userId" type="text" placeholder="Enter Username"><br><br>
 
   <b>Live Tracking</b><br>
-  <button onclick="startLiveTracking()">Load Live</button>
-
+  <button id="liveBtn" onclick="startLiveTracking()">Load Live</button>
   <br>
 <!--
   <b>History Range</b><br>
@@ -149,7 +148,11 @@ async function loadHistory() {
 /* ============================
      LOAD LIVE MODE
 ============================ */
-function startLiveTracking() {
+async function startLiveTracking() {
+  document.getElementById("liveBtn").disabled = true;
+  liveMode = false;
+  await new Promise(r => setTimeout(r, 150));
+
   wasLiveBefore = true;
   liveMode = true;
 
@@ -167,6 +170,7 @@ function startLiveTracking() {
     .then(data => {
       if (!data.length) {
         alert("No data found for this user");
+        document.getElementById("liveBtn").disabled = false;
         return;
       }
 
@@ -183,6 +187,7 @@ function startLiveTracking() {
       document.getElementById("lastUpdate").innerText =
         `Live tracking started | Last Live ID: ${lastLiveId}`;
 
+      document.getElementById("liveBtn").disabled = false;
       setTimeout(loadLiveUpdates, 500); // IMMEDIATE UPDATE
     });
 }
@@ -235,7 +240,9 @@ function drawPolyline() {
 /* ============================
      PLACE STATIC MARKER
 ============================ */
+
 function placeMarker(latlng) {
+  if (!liveMode) return;
   liveMarker = L.circleMarker(latlng, {
     radius: 8,
     fillColor: 'red',
@@ -260,6 +267,7 @@ function animateMarker(newLatLng) {
   const startTime = performance.now();
   
   function animate(now) {
+    if (!liveMode) return;
     let t = Math.min((now - startTime) / durationMs, 1);
 
 const lat = start.lat + (end.lat - start.lat) * t;
