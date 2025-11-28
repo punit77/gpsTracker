@@ -121,8 +121,15 @@ async function loadHistory() {
   trailCoords = [];
   lastHistoryId = 0;
 
-  if (polyline) polyline.remove();
-  if (liveMarker) liveMarker.remove();
+if (polyline) {
+    polyline.remove();
+    polyline = null;     
+}
+if (liveMarker) {
+    liveMarker.remove();
+    liveMarker = null;   
+}
+
 
   if (!data.length) {
     alert("No data found for this range");
@@ -161,8 +168,15 @@ async function startLiveTracking() {
   trailCoords = [];
   lastLiveId = 0;
 
-  if (polyline) polyline.remove();
-  if (liveMarker) liveMarker.remove();
+if (polyline) {
+    polyline.remove();
+    polyline = null;    // <-- ADD THIS
+}
+if (liveMarker) {
+    liveMarker.remove();
+    liveMarker = null;  // <-- ADD THIS
+}
+
 
   // Load ONLY 2000 points for performance
   fetch(`/get_locations?user_id=${userId}&limit=2000`)
