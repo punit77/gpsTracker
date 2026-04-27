@@ -1,40 +1,59 @@
 from flask import Flask, request, jsonify, render_template
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import os
 from datetime import datetime
 
 app = Flask(__name__)
-
-# --- USE WRITABLE PATH FOR RAILWAY ---
-DB_PATH = "/tmp/locations.db"
-
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
 
 
 # --- CREATE TABLE ON STARTUP ---
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
+
+    # LOCATIONS TABLE
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Locations (
-            ID INTEGER PRIMARY KEY AUTOINCREMENT,
-            UserID TEXT,
-            Latitude REAL,
-            Longitude REAL,
-            Timestamp TEXT
+        CREATE TABLE IF NOT EXISTS locations (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            timestamp TIMESTAMP,
+            api_source TEXT
         );
     """)
+
+    # JOBSITES TABLE
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS jobsites (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT,
+            customer_name TEXT,
+            jobsite_name TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            api_source TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     conn.commit()
     conn.close()
 
-
 # Run DB initialization when the module is imported
-init_db()
-
+try:
+    init_db()
+    print("DB initialized")
+except Exception as e:
+    print("DB init failed:", e)
 
 @app.route('/add_location', methods=['POST'])
 def add_location():
@@ -54,11 +73,12 @@ def add_location():
 
     conn = get_connection()
     cursor = conn.cursor()
+    api_source = data.get('api_source', 'unknown')
 
     cursor.execute("""
-        INSERT INTO Locations (UserID, Latitude, Longitude, Timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, lat, lng, ts_str))
+        INSERT INTO locations (user_id, latitude, longitude, timestamp, api_source)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (user_id, lat, lng, ts_str, api_source))
 
     conn.commit()
     conn.close()
@@ -70,106 +90,70 @@ def get_locations():
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
-    # optional filters
-    start = request.args.get("start")
-    end = request.args.get("end")
-    after_ts = request.args.get("after_ts")
-    after_id = request.args.get("after_id")
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    # pagination
-    MAX_LIMIT = 5000
-    default_limit = None  # keep None meaning "no explicit limit" (but client can request)
-    limit = request.args.get("limit", default_limit)
-    offset = request.args.get("offset")
+    cursor.execute("""
+        SELECT id, latitude, longitude, timestamp, api_source
+        FROM locations
+        WHERE user_id = %s
+        ORDER BY timestamp ASC
+    """, (user_id,))
 
-    # Validate limit 
-    limit_param = None
-    offset_param = None
-    if limit is not None:
-        try:
-            limit_param = int(limit)
-            if limit_param <= 0:
-                return jsonify({'error': 'limit must be a positive integer'}), 400
-            if limit_param > MAX_LIMIT:
-                limit_param = MAX_LIMIT  # cap it
-        except ValueError:
-            return jsonify({'error': 'limit must be an integer'}), 400
+    rows = cursor.fetchall()
+    conn.close()
 
-    if offset is not None:
-        try:
-            offset_param = int(offset)
-            if offset_param < 0:
-                return jsonify({'error': 'offset must be >= 0'}), 400
-        except ValueError:
-            return jsonify({'error': 'offset must be an integer'}), 400
+    # rows are already dicts because of RealDictCursor
+    for r in rows:
+        r['timestamp'] = str(r['timestamp'])
+
+    return jsonify(rows)
+
+@app.route('/add_jobsite', methods=['POST'])
+def add_jobsite():
+    data = request.get_json()
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Build the base query and params
-    query = """
-        SELECT ID, Latitude, Longitude, Timestamp
-        FROM Locations
-        WHERE UserID = ?
-    """
-    params = [user_id]
+    cursor.execute("""
+        INSERT INTO jobsites (
+            user_id, customer_name, jobsite_name,
+            latitude, longitude, api_source
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (
+        data['user_id'],
+        data['customer'],
+        data['jobsite'],
+        data['lat'],
+        data['lng'],
+        data['api_source']
+    ))
 
-    if start:
-        query += " AND Timestamp >= ?"
-        params.append(start)
-
-    if end:
-        query += " AND Timestamp <= ?"
-        params.append(end)
-
-    if after_ts:
-        query += " AND Timestamp > ?"
-        params.append(after_ts)
-
-    if after_id:
-        # after_id should be numeric; simple validation
-        try:
-            _ = int(after_id)
-            query += " AND ID > ?"
-            params.append(after_id)
-        except ValueError:
-            conn.close()
-            return jsonify({'error': 'after_id must be an integer'}), 400
-
-    # Always order by ID ascending (oldest -> newest)
-    query += " ORDER BY datetime(Timestamp) ASC"
-
-    # Apply LIMIT / OFFSET if provided (parameters appended after existing params)
-    if limit_param is not None:
-        query += " LIMIT ?"
-        params.append(limit_param)
-        if offset_param is not None:
-            query += " OFFSET ?"
-            params.append(offset_param)
-    elif offset_param is not None:
-        # offset without limit is ambiguous; reject to avoid accidental full scan
-        conn.close()
-        return jsonify({'error': 'offset requires limit to be set'}), 400
-
-    try:
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-    except Exception as e:
-        conn.close()
-        return jsonify({'error': 'database error', 'details': str(e)}), 500
-
+    conn.commit()
     conn.close()
 
-    return jsonify([
-        {
-            'id': r['ID'],
-            'lat': r['Latitude'],
-            'lng': r['Longitude'],
-            'timestamp': r['Timestamp']
-        }
-        for r in rows
-    ])
+    return jsonify({'status': 'jobsite added'})
 
+@app.route('/get_jobsites', methods=['GET'])
+def get_jobsites():
+    user_id = request.args.get("user_id")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM jobsites
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+    """, (user_id,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return jsonify(rows)
 
 @app.route('/map')
 def map_view():
