@@ -76,11 +76,12 @@
 ============================ */
 let map, polyline, trailCoords = [], liveMarker = null;
 let autoRefreshInterval = 8000; 
-let userId = "user1";
+let userId = "";
 let liveMode = false;    // IMPORTANT FIX
 let wasLiveBefore = false;
 let lastHistoryId = 0;
 let lastLiveId = 0;
+let isFetching = false;
 
 /* ============================
           INIT MAP
@@ -105,7 +106,13 @@ async function loadHistory() {
   wasLiveBefore = false;
   liveMode = false;  // STOP LIVE UPDATES
 
-  userId = document.getElementById("userId").value || "user1";
+  
+  userId = document.getElementById("userId").value;
+  if (!userId) {
+    alert("Enter user ID");
+    document.getElementById("liveBtn").disabled = false;
+    return;
+  }
   const start = document.getElementById("startTime").value;
   const end   = document.getElementById("endTime").value;
 
@@ -115,8 +122,15 @@ async function loadHistory() {
 
   console.log("Loading history:", url);
 
-  const resp = await fetch(url);
-  const data = await resp.json();
+  let data = [];
+  try {
+    const resp = await fetch(url);
+    data = await resp.json();
+  } catch (e) {
+    console.error("API error", e);
+    alert("Failed to load data");
+    return;
+  }
 
   trailCoords = [];
   lastHistoryId = 0;
@@ -139,6 +153,10 @@ if (liveMarker) {
   data.forEach(p => {
     trailCoords.push([p.lat, p.lng]);
     lastHistoryId = p.id;
+    if (trailCoords.length > 5000) {
+      trailCoords.shift();
+    }
+    
   });
 
 
@@ -163,7 +181,11 @@ async function startLiveTracking() {
   wasLiveBefore = true;
   liveMode = true;
 
-  userId = document.getElementById("userId").value || "user1";
+  userId = document.getElementById("userId").value;
+  if (!userId) {
+    alert("Enter user ID");
+    return;
+  }
 
   trailCoords = [];
   lastLiveId = 0;
@@ -179,61 +201,85 @@ if (liveMarker) {
 
 
   // Load ONLY 2000 points for performance
-  fetch(`/get_locations?user_id=${userId}&limit=2000`)
-    .then(res => res.json())
-    .then(data => {
-      if (!data.length) {
-        alert("No data found for this user");
-        document.getElementById("liveBtn").disabled = false;
-        return;
-      }
+  let data = [];
 
-      data.forEach(p => {
-        trailCoords.push([p.lat, p.lng]);
-        lastLiveId = p.id;
-      });
+  try {
+    const resp = await fetch(`/get_locations?user_id=${userId}&limit=2000`);
+    data = await resp.json();
+  } catch (e) {
+    console.error("Live load error", e);
+    alert("Failed to load live data");
+    document.getElementById("liveBtn").disabled = false;
+    return;
+  }
 
-      setTimeout(() => {
-          drawPolyline(); 
-          placeMarker(trailCoords.at(-1));
-      }, 50);
+  if (!data.length) {
+    alert("No data found for this user");
+    document.getElementById("liveBtn").disabled = false;
+    return;
+  }
 
-      document.getElementById("lastUpdate").innerText =
-        `Live tracking started | Last Live ID: ${lastLiveId}`;
+  data.forEach(p => {
+    trailCoords.push([p.lat, p.lng]);
+    lastLiveId = p.id;
+    if (trailCoords.length > 5000) {
+      trailCoords.shift();
+    }
+  });
 
-      document.getElementById("liveBtn").disabled = false;
-      setTimeout(loadLiveUpdates, 500); // IMMEDIATE UPDATE
-    });
-}
+  setTimeout(() => {
+    drawPolyline(); 
+    placeMarker(trailCoords.at(-1));
+  }, 50);
+
+  document.getElementById("lastUpdate").innerText =
+    `Live tracking started | Last Live ID: ${lastLiveId}`;
+
+  document.getElementById("liveBtn").disabled = false;
+  setTimeout(loadLiveUpdates, 500);
+  }
 
 /* ============================
     INCREMENTAL LIVE UPDATE
 ============================ */
 async function loadLiveUpdates() {
-  if (!lastLiveId || !liveMode) return;
+  if (!lastLiveId || !liveMode || isFetching) return;
 
-  const url = `/get_locations?user_id=${userId}&after_id=${lastLiveId}`;
-  const resp = await fetch(url);
-  const newPoints = await resp.json();
+  isFetching = true;
 
-  if (!newPoints.length) return;
+  try {
+    const url = `/get_locations?user_id=${userId}&after_id=${lastLiveId}`;
+    const resp = await fetch(url);
+    const newPoints = await resp.json();
 
-  newPoints.forEach(p => {
-    trailCoords.push([p.lat, p.lng]);
-    lastLiveId = p.id;
-  });
+    if (!newPoints.length) return;
 
+    newPoints.forEach(p => {
+      trailCoords.push([p.lat, p.lng]);
+      lastLiveId = p.id;
 
-if (polyline) {
-    polyline.addLatLng(trailCoords.at(-1));
-} else {
-    drawPolyline();
-}
+      if (trailCoords.length > 5000) {
+        trailCoords.shift();
+      }
+      
+    });
 
-  animateMarker(trailCoords.at(-1));
+    if (polyline) {
+      polyline.addLatLng(trailCoords.at(-1));
+    } else {
+      drawPolyline();
+    }
 
-  document.getElementById("lastUpdate").innerText =
-    "Updated @ " + new Date().toLocaleTimeString();
+    animateMarker(trailCoords.at(-1));
+
+    document.getElementById("lastUpdate").innerText =
+      "Updated @ " + new Date().toLocaleTimeString();
+
+  } catch (e) {
+    console.error("Live update error", e);
+  } finally {
+    isFetching = false;
+  }
 }
 
 /* ============================
@@ -249,6 +295,11 @@ function drawPolyline() {
   } else {
     polyline.addLatLng(trailCoords.at(-1));
   }
+
+  // ADD THIS
+  if (trailCoords.length > 1) {
+    map.fitBounds(trailCoords);
+  }
 }
 
 /* ============================
@@ -256,7 +307,6 @@ function drawPolyline() {
 ============================ */
 
 function placeMarker(latlng) {
-  if (!liveMode) return;
   liveMarker = L.circleMarker(latlng, {
     radius: 8,
     fillColor: 'red',
@@ -265,7 +315,10 @@ function placeMarker(latlng) {
     fillOpacity: 1
   }).addTo(map);
 
-  map.flyTo(latlng, 16, { duration: 2 });
+  // Only zoom first time
+  if (trailCoords.length <= 2) {
+    map.flyTo(latlng, 16, { duration: 2 });
+  }
 }
 
 /* ============================
@@ -288,7 +341,7 @@ const lat = start.lat + (end.lat - start.lat) * t;
 const lng = start.lng + (end.lng - start.lng) * t;
 
 liveMarker.setLatLng([lat, lng]);
-map.panTo([lat, lng], { animate: true });
+map.panTo([lat, lng], { animate: false });
     if (t < 1) requestAnimationFrame(animate);
   }
 
