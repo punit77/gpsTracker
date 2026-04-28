@@ -67,9 +67,9 @@ def add_location():
     timestamp = data.get('timestamp')
 
     try:
-        ts_str = timestamp.replace('Z', '') if timestamp else datetime.now().isoformat()
+        ts = datetime.fromisoformat(timestamp.replace('Z', '')) if timestamp else datetime.now()
     except:
-        ts_str = datetime.now().isoformat()
+        ts = datetime.now()
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -78,7 +78,7 @@ def add_location():
     cursor.execute("""
         INSERT INTO locations (user_id, latitude, longitude, timestamp, api_source)
         VALUES (%s, %s, %s, %s, %s)
-    """, (user_id, lat, lng, ts_str, api_source))
+    """, (user_id, lat, lng, ts, api_source))
 
     conn.commit()
     conn.close()
@@ -87,31 +87,54 @@ def add_location():
 @app.route('/get_locations', methods=['GET'])
 def get_locations():
     user_id = request.args.get("user_id")
+    limit = request.args.get("limit", type=int)
+    after_id = request.args.get("after_id", type=int)
+
     if not user_id:
         return jsonify({'error': 'user_id required'}), 400
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    query = """
         SELECT id, latitude, longitude, timestamp, api_source
         FROM locations
         WHERE user_id = %s
-        ORDER BY timestamp ASC
-    """, (user_id,))
+    """
+    params = [user_id]
 
+    if after_id:
+        query += " AND id > %s"
+        params.append(after_id)
+
+    query += " ORDER BY id ASC"
+
+    if limit:
+        query += " LIMIT %s"
+        params.append(limit)
+
+    cursor.execute(query, tuple(params))
     rows = cursor.fetchall()
     conn.close()
 
-    # rows are already dicts because of RealDictCursor
+    # FIX FIELD NAMES HERE
+    result = []
     for r in rows:
-        r['timestamp'] = str(r['timestamp'])
+        result.append({
+            "id": r["id"],
+            "lat": r["latitude"],   # FIX
+            "lng": r["longitude"],  # FIX
+            "timestamp": str(r["timestamp"]),
+            "api_source": r["api_source"]
+        })
 
-    return jsonify(rows)
+    return jsonify(result)
 
 @app.route('/add_jobsite', methods=['POST'])
 def add_jobsite():
     data = request.get_json()
+    if not data:
+        return jsonify({'error': 'no data'}), 400
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -122,6 +145,7 @@ def add_jobsite():
             latitude, longitude, api_source
         )
         VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
     """, (
         data['user_id'],
         data['customer'],
@@ -139,6 +163,8 @@ def add_jobsite():
 @app.route('/get_jobsites', methods=['GET'])
 def get_jobsites():
     user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
 
     conn = get_connection()
     cursor = conn.cursor()
