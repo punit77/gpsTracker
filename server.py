@@ -181,6 +181,33 @@ def get_jobsites():
 
     return jsonify(rows)
 
+@app.route('/delete_jobsite', methods=['POST'])
+def delete_jobsite():
+    data = request.get_json()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM jobsites
+        WHERE user_id = %s
+        AND customer_name = %s
+        AND jobsite_name = %s
+        AND latitude = %s
+        AND longitude = %s
+    """, (
+        data['user_id'],
+        data['customer'],
+        data['jobsite'],
+        data['lat'],
+        data['lng']
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({'status': 'deleted'})
+
 @app.route('/map')
 def map_view():
     return render_template('map.html')
