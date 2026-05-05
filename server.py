@@ -277,17 +277,19 @@ def get_here_route(from_lat, from_lng, to_lat, to_lng):
     section = data['routes'][0]['sections'][0]
 
     poly = section['polyline']
+
+    # Decode HERE polyline
     decoded_coords, _ = fp.decode(poly)
 
+    # SAFE extraction
     coords = [[p[0], p[1]] for p in decoded_coords]
-        
+
     duration_sec = section['summary']['duration']
 
     return jsonify({
         "route": coords,
         "eta": duration_sec
     })
-
 
 @app.route('/map')
 def map_view():
