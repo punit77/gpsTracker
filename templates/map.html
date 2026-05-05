@@ -82,6 +82,9 @@ let wasLiveBefore = false;
 let lastHistoryId = 0;
 let lastLiveId = 0;
 let isFetching = false;
+let jobsiteMarker = null;
+let routePolyline = null;
+let jobsiteLatLng = null;
 
 /* ============================
           INIT MAP
@@ -163,6 +166,8 @@ if (liveMarker) {
   setTimeout(() => {
       drawPolyline();
       placeMarker(trailCoords.at(-1));
+      const last = trailCoords.at(-1);
+      fetchRoute(last[0], last[1]);
   }, 50);
 
 
@@ -230,6 +235,8 @@ if (liveMarker) {
   setTimeout(() => {
     drawPolyline(); 
     placeMarker(trailCoords.at(-1));
+    const last = trailCoords.at(-1);
+    fetchRoute(last[0], last[1]);
   }, 50);
 
   document.getElementById("lastUpdate").innerText =
@@ -270,7 +277,10 @@ async function loadLiveUpdates() {
       drawPolyline();
     }
 
-    animateMarker(trailCoords.at(-1));
+    const latest = trailCoords.at(-1);
+
+    animateMarker(latest);
+    fetchRoute(latest[0], latest[1]);
 
     document.getElementById("lastUpdate").innerText =
       "Updated @ " + new Date().toLocaleTimeString();
@@ -321,6 +331,50 @@ function placeMarker(latlng) {
   }
 }
 
+function setJobsite(lat, lng) {
+  jobsiteLatLng = [lat, lng];
+
+  if (jobsiteMarker) {
+    jobsiteMarker.remove();
+  }
+
+  jobsiteMarker = L.marker(jobsiteLatLng)
+    .addTo(map)
+    .bindPopup("Jobsite")
+    .openPopup();
+}
+
+function drawRoute(coords) {
+  if (routePolyline) {
+    routePolyline.remove();
+  }
+
+  routePolyline = L.polyline(coords, {
+    color: 'green',
+    weight: 5,
+    opacity: 0.9
+  }).addTo(map);
+}
+
+async function fetchRoute(fromLat, fromLng) {
+  if (!jobsiteLatLng) return;
+
+  try {
+    const resp = await fetch(
+      `/get_route?from_lat=${fromLat}&from_lng=${fromLng}`
+    );
+
+    const data = await resp.json();
+
+    if (data.route && data.route.length > 0) {
+      drawRoute(data.route);
+    }
+
+  } catch (e) {
+    console.error("Route fetch failed", e);
+  }
+}
+
 /* ============================
    SMOOTH MARKER MOVEMENT
 ============================ */
@@ -367,6 +421,10 @@ document.addEventListener("visibilitychange", () => {
 });
 
 initMap();
+
+window.setJobsiteFromApp = function(lat, lng) {
+  setJobsite(lat, lng);
+};
 
 </script>
 </body>
