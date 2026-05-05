@@ -85,6 +85,10 @@ let isFetching = false;
 let jobsiteMarker = null;
 let routePolyline = null;
 let jobsiteLatLng = null;
+let selectedApi = "Google";
+let lastRouteFetchPoint = null;
+let ROUTE_REFRESH_DISTANCE = 30; 
+let currentETA = "";
 
 /* ============================
           INIT MAP
@@ -108,6 +112,7 @@ function initMap() {
 async function loadHistory() {
   wasLiveBefore = false;
   liveMode = false;  // STOP LIVE UPDATES
+  lastRouteFetchPoint = null;
 
   
   userId = document.getElementById("userId").value;
@@ -137,6 +142,8 @@ async function loadHistory() {
 
   trailCoords = [];
   lastHistoryId = 0;
+  routePolyline = null;
+  lastRouteFetchPoint = null;
 
 if (polyline) {
     polyline.remove();
@@ -185,6 +192,7 @@ async function startLiveTracking() {
 
   wasLiveBefore = true;
   liveMode = true;
+  lastRouteFetchPoint = null;
 
   userId = document.getElementById("userId").value;
   if (!userId) {
@@ -194,6 +202,9 @@ async function startLiveTracking() {
 
   trailCoords = [];
   lastLiveId = 0;
+  routePolyline = null;
+  lastRouteFetchPoint = null;
+
 
 if (polyline) {
     polyline.remove();
@@ -345,29 +356,72 @@ function setJobsite(lat, lng) {
 }
 
 function drawRoute(coords) {
-  if (routePolyline) {
-    routePolyline.remove();
+  if (!routePolyline) {
+    routePolyline = L.polyline(coords, {
+      color: 'green',
+      weight: 5,
+      opacity: 0.9
+    }).addTo(map);
+  } else {
+    routePolyline.setLatLngs(coords);
   }
 
-  routePolyline = L.polyline(coords, {
-    color: 'green',
-    weight: 5,
-    opacity: 0.9
-  }).addTo(map);
+  map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
 }
+
+function getDistanceMeters(a, b) {
+  const R = 6371000; // meters
+  const dLat = (b[0] - a[0]) * Math.PI / 180;
+  const dLng = (b[1] - a[1]) * Math.PI / 180;
+
+  const lat1 = a[0] * Math.PI / 180;
+  const lat2 = b[0] * Math.PI / 180;
+
+  const x = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.sin(dLng/2) * Math.sin(dLng/2) *
+            Math.cos(lat1) * Math.cos(lat2);
+
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+
+  return R * c;
+}
+
 
 async function fetchRoute(fromLat, fromLng) {
   if (!jobsiteLatLng) return;
 
+  const currentPoint = [fromLat, fromLng];
+
+  // 🚀 Skip if movement is small
+  if (lastRouteFetchPoint) {
+    const dist = getDistanceMeters(lastRouteFetchPoint, currentPoint);
+
+    if (dist < ROUTE_REFRESH_DISTANCE) {
+      return; // 🔥 skip API call
+    }
+  }
+
+  lastRouteFetchPoint = currentPoint;
+
   try {
     const resp = await fetch(
-      `/get_route?from_lat=${fromLat}&from_lng=${fromLng}`
+      `/get_route?from_lat=${fromLat}&from_lng=${fromLng}&to_lat=${jobsiteLatLng[0]}&to_lng=${jobsiteLatLng[1]}&api=${selectedApi}`
     );
 
     const data = await resp.json();
 
+    console.log("ROUTE DATA:", data);
+
     if (data.route && data.route.length > 0) {
-      drawRoute(data.route);
+    drawRoute(data.route);
+    }
+
+    if (data.eta) {
+    const minutes = Math.round(data.eta / 60);
+    currentETA = minutes + " min";
+
+    document.getElementById("lastUpdate").innerText =
+        "ETA: " + currentETA + " | Updated: " + new Date().toLocaleTimeString();
     }
 
   } catch (e) {
@@ -421,6 +475,10 @@ document.addEventListener("visibilitychange", () => {
 });
 
 initMap();
+
+window.setApiFromApp = function(api) {
+  selectedApi = api;
+};
 
 window.setJobsiteFromApp = function(lat, lng) {
   setJobsite(lat, lng);
