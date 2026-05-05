@@ -3,9 +3,14 @@ import psycopg2
 import psycopg2.extras
 import os
 from datetime import datetime
+import requests
+import polyline
+import flexpolyline as fp
 
 app = Flask(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+HERE_API_KEY = os.getenv("HERE_API_KEY")
 
 def get_connection():
     return psycopg2.connect(
@@ -207,6 +212,81 @@ def delete_jobsite():
     conn.close()
 
     return jsonify({'status': 'deleted'})
+
+@app.route('/get_route', methods=['GET'])
+def get_route():
+    from_lat = request.args.get("from_lat", type=float)
+    from_lng = request.args.get("from_lng", type=float)
+    to_lat = request.args.get("to_lat", type=float)
+    to_lng = request.args.get("to_lng", type=float)
+    api = request.args.get("api", "Google")
+
+    if not all([from_lat, from_lng, to_lat, to_lng]):
+        return jsonify({"error": "Missing coordinates"}), 400
+
+    try:
+        if api == "Google":
+            return get_google_route(from_lat, from_lng, to_lat, to_lng)
+        else:
+            return get_here_route(from_lat, from_lng, to_lat, to_lng)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def get_google_route(from_lat, from_lng, to_lat, to_lng):
+    url = (
+        f"https://maps.googleapis.com/maps/api/directions/json"
+        f"?origin={from_lat},{from_lng}"
+        f"&destination={to_lat},{to_lng}"
+        f"&key={GOOGLE_API_KEY}"
+    )
+
+    resp = requests.get(url)
+    data = resp.json()
+
+    if not data.get("routes"):
+        return jsonify({"route": []})
+
+    route = data['routes'][0]
+    points = route['overview_polyline']['points']
+    decoded = polyline.decode(points)
+
+    duration_sec = route['legs'][0]['duration']['value']
+
+    return jsonify({
+        "route": decoded,
+        "eta": duration_sec
+    })
+
+def get_here_route(from_lat, from_lng, to_lat, to_lng):
+    url = (
+        f"https://router.hereapi.com/v8/routes"
+        f"?transportMode=car"
+        f"&origin={from_lat},{from_lng}"
+        f"&destination={to_lat},{to_lng}"
+        f"&return=polyline"
+        f"&apiKey={HERE_API_KEY}"
+    )
+
+    resp = requests.get(url)
+    data = resp.json()
+
+    if not data.get("routes"):
+        return jsonify({"route": []})
+
+    section = data['routes'][0]['sections'][0]
+
+    poly = section['polyline']
+    decoded = fp.decode(poly)
+
+    coords = [[lat, lng] for lat, lng in decoded]
+    duration_sec = section['summary']['duration']
+
+    return jsonify({
+        "route": coords,
+        "eta": duration_sec
+    })
+
 
 @app.route('/map')
 def map_view():
